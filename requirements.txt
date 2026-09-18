@@ -1,0 +1,6 @@
+treys
+numpy
+opencv-python
+mss
+pytesseract
+pyobjc-framework-Quartz
