@@ -306,8 +306,9 @@ font/OCR fallbacks and need further real examples. OCR is synchronous and the
 actual processing interval includes computation time; this is not a verified
 real-time reader. No automatic game actions are performed.
 
-Dependencies use the existing project environment. Linux requires Tesseract and
-DejaVu Sans (`fonts-dejavu-core`), both present in the prepared environment.
+Dependencies use the existing project environment. Tesseract must be installed
+(`brew install tesseract` on macOS). DejaVu Sans is bundled in `assets/fonts/`
+with its license, so suit matching does not depend on a Linux system-font path.
 
 ### Recording layout and video regression checks
 
@@ -394,3 +395,11 @@ turn/stale/confirmation gates, missing or duplicate cards, invalid input and pol
 integration. Browser checks using Chromium cover eight rows, the sample frame's
 HJ position, a confirmed Fold suggestion, dealer rotation to LJ, turn gating and
 a narrow mobile viewport with no JavaScript errors.
+
+
+### macOS startup font fix
+
+If an older checkout reports `Suit templates require DejaVuSans.ttf`, pull the
+latest `main`. The matcher and tests now load the bundled font relative to their
+source file, so no system font installation is needed and startup works from any
+working directory. Keep the `assets/fonts/` directory with the application.

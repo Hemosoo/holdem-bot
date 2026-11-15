@@ -8,12 +8,33 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 from table_reader import TableReader, SuitMatcher, Reading, parse_amount, text_read, turn_ring, summarize, locate_board
 
-FONT='/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'
+FONT=str(Path(__file__).resolve().parent/'assets/fonts/DejaVuSans.ttf')
 
 class RecognitionTests(unittest.TestCase):
     def test_amounts(self):
         for raw, expected in [('POT: 6.50 BB',6.5),('450.50 BB',450.5),('450.50BB',450.5),('$1,234.50',1234.5),('1 2',None),('Waiting',None),('',None)]:
             self.assertEqual(parse_amount(raw),expected,raw)
+
+    def test_font_loading_without_linux_font_or_repository_cwd(self):
+        import os
+        import tempfile
+        original=ImageFont.truetype
+        loaded=[]
+        def portable_font(path,*args,**kwargs):
+            self.assertNotIn('/usr/share/',str(path))
+            self.assertEqual(Path(path),Path(FONT))
+            loaded.append(path)
+            return original(path,*args,**kwargs)
+        cwd=Path.cwd()
+        try:
+            with tempfile.TemporaryDirectory() as directory:
+                os.chdir(directory)
+                with patch('table_reader.ImageFont.truetype',side_effect=portable_font):
+                    matcher=SuitMatcher()
+                self.assertEqual(set(matcher.templates),set('cdhs'))
+                self.assertEqual(len(loaded),4)
+        finally:
+            os.chdir(cwd)
 
     def test_suit_shapes(self):
         matcher=SuitMatcher()

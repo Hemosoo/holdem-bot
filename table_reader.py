@@ -182,13 +182,13 @@ def normalized_mask(mask):
 
 class SuitMatcher:
     def __init__(self):
-        font_path = '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'
-        if not Path(font_path).exists():
-            raise RuntimeError('Suit templates require DejaVuSans.ttf (fonts-dejavu-core on Linux).')
+        font_path = Path(__file__).resolve().parent / 'assets' / 'fonts' / 'DejaVuSans.ttf'
+        if not font_path.is_file():
+            raise RuntimeError('Bundled suit font is missing. Restore assets/fonts/DejaVuSans.ttf from the repository.')
         self.templates = {}
         for suit, glyph in zip('cdhs', '♣♦♥♠'):
             im = Image.new('L', (100, 100))
-            ImageDraw.Draw(im).text((5, 0), glyph, font=ImageFont.truetype(font_path, 72), fill=255)
+            ImageDraw.Draw(im).text((5, 0), glyph, font=ImageFont.truetype(str(font_path), 72), fill=255)
             self.templates[suit] = normalized_mask((np.array(im) > 100).astype('uint8')*255)
 
     def read(self, image):
