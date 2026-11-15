@@ -1,0 +1,54 @@
+{
+  "description": "Human-transcribed labels for original user-supplied calibration screenshots stored alongside this manifest. These are calibration checks, not held-out accuracy; the ambiguous compact seat_0 stack remains a reported mismatch.",
+  "examples": [
+    {
+      "image": "ChatGPT Image Nov 11, 2026, 10_12_23 PM.png",
+      "layout": "compact",
+      "expected": {
+        "pot": 6.5,
+        "dealer_seat": 0,
+        "seat_0.stack": 211.0,
+        "seat_1.stack": 102.5,
+        "seat_2.stack": 451.0,
+        "seat_3.stack": 190.0,
+        "seat_4.stack": 80.0,
+        "seat_5.stack": 200.0,
+        "seat_6.stack": 410.0,
+        "seat_7.stack": 188.5,
+        "seat_0.bet": 4.0,
+        "seat_1.bet": 0.5,
+        "seat_2.bet": 1.0,
+        "seat_6.bet": 1.0,
+        "seat_6.turn_ring": true,
+        "board_0": null,
+        "board_1": null,
+        "board_2": null,
+        "board_3": null,
+        "board_4": null
+      }
+    },
+    {
+      "image": "ChatGPT Image Nov 11, 2026, 10_12_15 PM.png",
+      "layout": "expanded",
+      "expected": {
+        "pot": 2.5,
+        "dealer_seat": 4,
+        "seat_0.stack": 200.0,
+        "seat_1.stack": 102.5,
+        "seat_2.stack": 450.5,
+        "seat_3.stack": 190.5,
+        "seat_4.stack": 77.5,
+        "seat_5.stack": 203.0,
+        "seat_6.stack": 200.5,
+        "seat_7.stack": 187.5,
+        "board_0": "Jc",
+        "board_1": "9c",
+        "board_2": "Th",
+        "board_3": "2c",
+        "board_4": "2h",
+        "seat_5.card_0": "3c",
+        "seat_5.card_1": "7h"
+      }
+    }
+  ]
+}

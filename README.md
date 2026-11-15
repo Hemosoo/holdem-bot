@@ -244,3 +244,153 @@ python3 screen_reader.py --once
 | 3 | CFR bot trained via self-play, reaches Nash equilibrium |
 | 4 | Neural network trained on CFR strategy outputs |
 | 5 | Full GTO approximation with hand abstraction |
+
+## Eight-seat table reader
+
+`table_reader.py` reads screenshots, video, or live frames of the supplied table
+skin and emits JSON. It uses OCR plus isolated glyph templates calibrated from
+the original images in `fixtures/`. It never infers face-down cards.
+
+```bash
+source .venv/bin/activate
+python table_reader.py --image "fixtures/ChatGPT Image Nov 11, 2026, 10_12_15 PM.png" --confirmations 1 --overlay /tmp/table-overlay.png
+python table_reader.py --video /path/session.mp4 > /tmp/observations.jsonl
+python table_reader.py --live --layout expanded > /tmp/observations.jsonl
+python evaluate_table_reader.py fixtures --output /tmp/table-evaluation
+python -m unittest -v test_table_reader
+```
+
+Use `--viewport X Y WIDTH HEIGHT` when the client is inside a larger screenshot.
+The viewport must frame the whole client as in the supplied examples. Auto layout
+uses aspect ratio: compact has a 1024x677 reference, expanded 1024x765. It does not
+track a moving window or discover arbitrary seat arrangements. Inspect an overlay
+before relying on readings. Live capture requires an active desktop.
+
+Output:
+- `fields`: observed value, heuristic confidence, raw OCR and reference-frame box.
+- `confirmed`: values repeated across two processed frames by default. A missing
+  observation removes confirmation immediately. A static screenshot needs
+  `--confirmations 1` to populate this map.
+- `table`: eight players, board, pot, dealer seat and inferred street. This is a
+  summary of the current observations, **not** a confirmed game state. Seats run
+  clockwise from upper-left; the bottom seat is 5.
+- `warnings`: consistency problems. Rejected duplicate cards retain `candidate`
+  for review, while `value` remains null.
+
+Players include name, stack, inward bet, recognized status labels, a positive
+blue-turn-ring observation, and exposed cards. Missing is unknown, not zero,
+folded, absent, or preflop. Three to five consecutive identified board cards can
+establish flop/turn/river. Amounts use displayed BB units. Confidence is not a
+calibrated probability; raw OCR and overlays remain essential for review.
+
+### Validation and remaining limits
+
+On the two original calibration images, 36 of 37 labeled checks match. All five
+board cards, hero 3c/7h, both pots, both dealers, four visible bets, the blue turn
+ring and 15 stacks match. The compact upper-left stack is left unknown because
+OCR disagrees between 211 and 21. The evaluator intentionally exits nonzero for
+that mismatch and writes a complete report rather than hiding it.
+
+The expanded frame's exposed pair visually contains two 7s cards. Both visual
+candidates are retained and rejected as a duplicate; no valid pair is invented.
+RAISE, Waiting and SITTING OUT labels have regression coverage. Several names
+still contain OCR errors or remain unknown; names are not covered by the 37-field
+accuracy count. Seat numbers provide stable identifiers within this layout.
+
+These are calibration results, not held-out accuracy. Glyphs came from the same
+images (see `vision_templates/README.md`). Board-card tests also exercise dimming
+and downsampling, but there is no validation on actual motion, animations,
+new camera framing, unseen fonts, or new table skins. Tilted/dim cards are only
+calibrated at the displayed positions. Diamonds and unrepresented ranks rely on
+font/OCR fallbacks and need further real examples. OCR is synchronous and the
+actual processing interval includes computation time; this is not a verified
+real-time reader. No automatic game actions are performed.
+
+Dependencies use the existing project environment. Linux requires Tesseract and
+DejaVu Sans (`fonts-dejavu-core`), both present in the prepared environment.
+
+### Recording layout and video regression checks
+
+The supplied 71.38-second, 2322x1552, 60 fps test recording uses a different layout.
+Select it explicitly; `auto` still selects the two original screenshot layouts.
+
+```bash
+python table_reader.py --video /path/pokergame_c9qXwyb6.mp4 --layout video --interval 5 > /tmp/video-observations.jsonl
+python evaluate_table_video.py /path/pokergame_c9qXwyb6.mp4 --output /tmp/video-validation
+```
+
+Video layout uses a 1024x684 reference, locates board-card rectangles on the felt,
+and uses the chip icon to locate the pot and hero stack's first digit. This avoids
+clipping when the amount panel shifts with text length. Hero cards use the new
+positions. These changes do not provide arbitrary window tracking.
+
+CLI video results include source video seconds and frame index, separately from
+wall-clock observation time. The evaluator checks nine labeled instants: 0, 5,
+10, 20, 30, 40, 50, 60 and 70 seconds. Each checks five board slots, two hero-card
+slots, pot and hero stack (81 comparisons total). It writes a mismatch report,
+observations and overlays, and fails on mismatches or decoding errors. This is
+sampled-frame evaluation, not full-frame or complete event coverage. Opponent
+names, opponent stacks, every bet and every animation are not validated by this
+81-field comparison. Frames at 40s and 50s provided additional glyph calibration;
+other sample frames use the same recording and are not an independent dataset.
+
+Retained normalized frames `fixtures/video-40.png` and `video-70.png` exercise a
+flop, hero cards, leading digits of amounts, and removal of stale board/card
+confirmations at a hand transition. OCR takes roughly 6–7 seconds per frame on
+the current machine. The live/video path remains an offline diagnostic tool at
+this speed, not a real-time observer. `--interval` controls source sampling for
+video; it does not make OCR run faster.
+
+Latest labeled video run: **81/81 comparisons match across the nine sampled
+frames**. This includes removal of both hero cards and all board cards at 70s.
+The evaluator's detailed report and overlays are under
+`/workspace/.holdem-setup/video-validation/` in the current environment. The
+original-still calibration continues to leave the ambiguous 211/21 stack unknown.
+Video-specific glyph templates are enabled only with `--layout video` so their
+additional variants cannot make still-image suit matching ambiguous.
+
+## Small table dashboard
+
+```bash
+source .venv/bin/activate
+python dashboard.py                  # starts with the retained test frame
+python dashboard.py --video /path/recording.mp4 --layout video
+python dashboard.py --live --layout video --viewport X Y WIDTH HEIGHT
+python -m unittest -v test_dashboard
+```
+
+The local server binds only to 127.0.0.1 on port 8765 (change with `--port`). Open
+that port in a browser on the same machine. It does not require Flask or a new
+package. Use Read frame for a screenshot/live source or enter a source time for a
+recording. Open image uploads a frame up to 16 MiB. Auto update requests a new
+reading when the previous one has completed; for recordings it advances five
+source seconds each time. Capture latency remains about 6–7 seconds. A failed
+capture disables suggestions even if an older image is still displayed.
+
+The dashboard shows community and hero cards, eight player rows, stacks, visible
+bets, statuses, dealer-relative positions and the detected hero turn ring. Choose
+your seat (default 5, bottom seat), verify the dealer and check exactly the seats
+dealt into this hand. Folded players remain checked; exclude empty/sitting-out
+seats. Positions rotate clockwise; BTN means dealer and CO means cutoff. Heads-up
+shows BTN / SB. Unreadable names and amounts remain uncertain; no hidden card is
+inferred. A missing turn ring is unknown, not proof that it is someone else's turn.
+
+Suggestions adapt the existing **hemobot rules**, not a solver or a claim of the
+optimal move. Confirm the street if it cannot be inferred, amount to call (0 for a
+free check), raise count preflop, preflop aggressor when relevant, whether you act
+last postflop, and whether raising is allowed. The reader cannot reliably recover
+all that betting history from a screenshot. Confirm context for the current frame;
+a new frame invalidates confirmation so old amounts cannot carry into a new hand.
+A reading older than 30 seconds cannot produce advice. Automatic turn detection
+uses a current blue-ring observation; the user can override it for tests.
+
+Incomplete or contradictory cards, unknown hero stack, uncertain positions, missing
+context, or an unconfirmed frame withhold recommendations. No bet size is computed
+and no game action is executed. The UI shows the policy source, source time, capture
+age and uncertainty. It can analyze a test recording independently of any game.
+
+Verification: six dashboard policy tests cover positions, heads-up, excluded seats,
+turn/stale/confirmation gates, missing or duplicate cards, invalid input and policy
+integration. Browser checks using Chromium cover eight rows, the sample frame's
+HJ position, a confirmed Fold suggestion, dealer rotation to LJ, turn gating and
+a narrow mobile viewport with no JavaScript errors.
