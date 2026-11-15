@@ -506,7 +506,7 @@ def main():
             cap.release()
     else:
         import mss
-        with mss.mss() as sct:
+        with mss.MSS() as sct:
             try:
                 while True:
                     process(cv2.cvtColor(np.asarray(sct.grab(sct.monitors[1])),cv2.COLOR_BGRA2BGR))

@@ -108,14 +108,14 @@ def save_config(cfg: dict) -> None:
 
 # ── Screen capture ─────────────────────────────────────────────────────────────
 
-def capture_region(sct: mss.mss, region: Region) -> np.ndarray:
+def capture_region(sct: mss.MSS, region: Region) -> np.ndarray:
     """Capture a screen region and return as a BGR numpy array."""
     raw = sct.grab(region.bbox)
     img = np.array(raw)
     return cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
 
 
-def capture_full_monitor(sct: mss.mss, monitor_num: int = 1) -> np.ndarray:
+def capture_full_monitor(sct: mss.MSS, monitor_num: int = 1) -> np.ndarray:
     mon = sct.monitors[monitor_num]
     raw = sct.grab(mon)
     img = np.array(raw)
@@ -353,7 +353,7 @@ class PokerScreenReader:
             for r in self.config.get("regions", [])
         }
         self.monitor_num = self.config.get("monitor", 1)
-        self._sct = mss.mss()
+        self._sct = mss.MSS()
 
     def read(self, debug: bool = False) -> DetectedGameState:
         state = DetectedGameState()
@@ -444,7 +444,7 @@ def calibrate(window_keyword: str = "wpt"):
     if full is None:
         print("[calibrate] Capturing full screen via mss in 3 seconds — switch to your poker client...")
         time.sleep(3)
-        with mss.mss() as sct:
+        with mss.MSS() as sct:
             mon = sct.monitors[1]
             raw = sct.grab(mon)
             full = np.array(raw)
@@ -526,7 +526,7 @@ def run_live(reader: PokerScreenReader, fps: int = 2):
     print("[live] Starting — press 'q' in the debug window to quit")
     interval = 1.0 / fps
 
-    with mss.mss() as sct:
+    with mss.MSS() as sct:
         mon = sct.monitors[reader.monitor_num]
         mon_region = Region("full", mon["left"], mon["top"], mon["width"], mon["height"])
 

@@ -403,3 +403,33 @@ If an older checkout reports `Suit templates require DejaVuSans.ttf`, pull the
 latest `main`. The matcher and tests now load the bundled font relative to their
 source file, so no system font installation is needed and startup works from any
 working directory. Keep the `assets/fonts/` directory with the application.
+
+### Live screen capture and macOS troubleshooting
+
+Start live mode with `python dashboard.py --live --layout video`, keep the process
+running, and open the dashboard in your browser. **Auto update is enabled by
+default in live mode while the page remains open.** Each capture is followed by
+OCR and a short display interval before the next capture; this is not video-rate
+recognition. Uncheck Auto update to pause and inspect/confirm a frame.
+
+The captured image is visible immediately, before OCR finishes. Progress shows
+capturing vs recognition and elapsed seconds. Last completed readings stay visible
+during updates, but suggestions are withheld while a fresh reading is pending.
+If recognition fails (for example missing Tesseract), the captured preview remains
+visible and the error appears in both the dashboard and Terminal.
+
+Keep the game visible beside the dashboard or on another display. A covered game
+window cannot be read from a screenshot. Drag around the entire game client in
+the preview, including the player panels, after a reading finishes. The crop is
+applied to that same image without taking another screenshot; subsequent live
+captures reuse the selected area. Use entire image clears it. This is a fixed
+screen rectangle: reselect it if the game window moves or resizes. It is not
+automatic window tracking. `--monitor 2` selects a second display (default: 1).
+
+On macOS, enable Screen Recording (or Screen & System Audio Recording) for the
+application running Python under System Settings > Privacy & Security. That may
+be Terminal, iTerm or VS Code. Quit and reopen that application after enabling it,
+then restart the dashboard. A preview showing only wallpaper or the wrong app
+means the game is not being captured; check permission, display and visibility.
+The current capture code uses `mss.MSS()` rather than the deprecated `mss.mss()`.
+An MSS deprecation warning alone does not establish whether capture succeeded.

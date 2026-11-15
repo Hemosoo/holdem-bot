@@ -1,4 +1,10 @@
 import copy
+import threading
+import time
+import types
+from unittest.mock import patch, MagicMock
+import numpy as np
+from dashboard import Dashboard
 import unittest
 from dashboard_logic import positions, advice
 
@@ -49,6 +55,52 @@ class DashboardTests(unittest.TestCase):
         for change in ({'call':float('nan')},{'hero':9},{'raises':-1},{'seats':[True]},{'turn':'bad'}):
             c=context();c.update(change)
             with self.assertRaises(ValueError): advice(None,c)
+
+
+class CaptureTests(unittest.TestCase):
+    def wait_done(self,app):
+        deadline=time.monotonic()+3
+        while app.busy and time.monotonic()<deadline: time.sleep(.01)
+        self.assertFalse(app.busy)
+
+    def test_preview_published_before_ocr_and_modern_capture_api(self):
+        started=threading.Event();release=threading.Event()
+        def read(frame):
+            started.set();release.wait(3);return snapshot()
+        with patch('dashboard.TableReader') as reader, patch('mss.MSS') as capture:
+            reader.return_value.read.side_effect=read
+            sct=capture.return_value.__enter__.return_value
+            sct.monitors=[{}, {'left':0,'top':0,'width':30,'height':20}]
+            sct.grab.return_value=np.zeros((20,30,4),np.uint8)
+            app=Dashboard(live=True);app.capture()
+            try:
+                self.assertTrue(started.wait(2))
+                state=app.state()
+                self.assertTrue(state['preview_ready'])
+                self.assertTrue(state['busy'])
+                self.assertIsNone(state['snapshot'])
+                self.assertEqual(state['frame_size'],[30,20])
+                self.assertIsNone(state['advice']['action'])
+                capture.assert_called_once()
+            finally: release.set();self.wait_done(app)
+            self.assertIsNone(app.error)
+
+    def test_macos_permission_failure_is_actionable(self):
+        quartz=types.SimpleNamespace(CGPreflightScreenCaptureAccess=lambda:False)
+        with patch('dashboard.TableReader'), patch('dashboard.sys.platform','darwin'), patch.dict('sys.modules',{'Quartz':quartz}):
+            app=Dashboard(live=True);app.capture();self.wait_done(app)
+            self.assertIn('Screen Recording',app.error)
+            self.assertIn('Quit and reopen',app.error)
+            self.assertFalse(app.state()['preview_ready'])
+
+    def test_ocr_error_keeps_preview_and_reports_failure(self):
+        with patch('dashboard.TableReader') as reader:
+            reader.return_value.read.side_effect=RuntimeError('Tesseract is not installed or not in PATH')
+            app=Dashboard();app.capture();self.wait_done(app)
+            state=app.state()
+            self.assertTrue(state['preview_ready'])
+            self.assertIn('brew install tesseract',state['error'])
+            self.assertIsNone(state['advice']['action'])
 
 
 if __name__=='__main__': unittest.main()

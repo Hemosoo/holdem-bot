@@ -4,6 +4,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
 import threading
+import sys
 import time
 import cv2
 import numpy as np
@@ -12,28 +13,45 @@ from table_reader import TableReader
 
 
 class Dashboard:
-    def __init__(self,source=None,live=False,layout='video',viewport=None):
+    def __init__(self,source=None,live=False,layout='video',viewport=None,monitor=1):
         self.source=source or Path(__file__).parent/'fixtures/video-40.png'
         self.live=live
+        self.monitor=monitor
+        self.stage="Waiting for capture"; self.started_at=None
+        self.frame_size=None; self.preview_version=0; self.last_frame=None
         self.reader=TableReader(layout=layout,viewport=viewport)
         self.current_source=None; self.snapshot=None; self.preview=b''; self.busy=False; self.error=None
         self.lock=threading.Lock(); self.captured_at=0; self.source_seconds=None
         self.context={'hero':5,'seats':list(range(8)),'turn':'auto','street':'auto','last_to_act':'unknown','can_raise':False}
 
-    def capture(self,seconds=0,uploaded=None):
+    def capture(self,seconds=0,uploaded=None,reuse=False):
         if not isinstance(seconds,(int,float)) or not np.isfinite(seconds) or seconds<0: raise ValueError('Invalid video time.')
         with self.lock:
             if self.busy: return False
             self.busy=True; self.error=None; self.context.pop('confirmed_at',None)
+            self.started_at=time.time(); self.stage='Capturing image'
+            # Keep the last frame visible while the next capture is being obtained.
         def work():
             try:
-                source_seconds=None
-                if uploaded is not None:
+                source_seconds=self.source_seconds if reuse else None
+                if reuse:
+                    frame=self.last_frame.copy() if self.last_frame is not None else None
+                elif uploaded is not None:
                     frame=cv2.imdecode(np.frombuffer(uploaded,np.uint8),cv2.IMREAD_COLOR)
                 elif self.live:
                     import mss
-                    with mss.mss() as sct:
-                        frame=cv2.cvtColor(np.asarray(sct.grab(sct.monitors[1])),cv2.COLOR_BGRA2BGR)
+                    if sys.platform=='darwin':
+                        try:
+                            import Quartz
+                        except ImportError:
+                            Quartz=None
+                        check=getattr(Quartz,'CGPreflightScreenCaptureAccess',None)
+                        if check and not check():
+                            raise RuntimeError('Screen Recording permission is required. In System Settings > Privacy & Security > Screen Recording (or Screen & System Audio Recording), allow the app running Python: Terminal, iTerm or VS Code. Quit and reopen that app, then restart this dashboard.')
+                    with mss.MSS() as sct:
+                        if not 1<=self.monitor<len(sct.monitors):
+                            raise ValueError(f'Monitor {self.monitor} is unavailable. Available monitors: 1–{len(sct.monitors)-1}.')
+                        frame=cv2.cvtColor(np.asarray(sct.grab(sct.monitors[self.monitor])),cv2.COLOR_BGRA2BGR)
                 elif str(self.source).lower().endswith(('.mp4','.mov','.avi','.mkv')):
                     cap=cv2.VideoCapture(str(self.source))
                     try:
@@ -45,16 +63,24 @@ class Dashboard:
                 else: frame=cv2.imread(str(self.source))
                 if frame is None: raise ValueError('Cannot decode image.')
                 if frame.shape[0]*frame.shape[1]>24_000_000: raise ValueError('Image is too large.')
-                captured=time.time()
-                snapshot=self.reader.read(frame)
+                captured=self.captured_at if reuse else time.time()
                 ok,jpeg=cv2.imencode('.jpg',cv2.resize(frame,(900,round(frame.shape[0]*900/frame.shape[1]))))
                 if not ok: raise ValueError('Cannot encode preview.')
                 with self.lock:
-                    self.snapshot=snapshot; self.preview=jpeg.tobytes(); self.captured_at=captured
+                    self.preview=jpeg.tobytes(); self.captured_at=captured
+                    self.preview_version+=1; self.frame_size=[frame.shape[1],frame.shape[0]]
+                    self.last_frame=frame; self.stage='Reading cards and text'
                     self.source_seconds=source_seconds
-                    self.current_source='Uploaded image' if uploaded is not None else None
+                    if not reuse: self.current_source='Uploaded image' if uploaded is not None else None
+                snapshot=self.reader.read(frame)
+                with self.lock:
+                    self.snapshot=snapshot; self.stage='Reading complete'
             except Exception as exc:
-                with self.lock: self.error=str(exc)
+                message=str(exc)
+                if 'tesseract is not installed' in message.lower():
+                    message+=' On macOS, run brew install tesseract, then restart the dashboard.'
+                with self.lock: self.error=message; self.stage='Capture or recognition failed'
+                print(f'Dashboard error: {message}',flush=True)
             finally:
                 with self.lock: self.busy=False
         threading.Thread(target=work,daemon=True).start()
@@ -67,7 +93,10 @@ class Dashboard:
             if self.busy or self.error:
                 recommendation.update(action=None,reason='Reading a new frame…' if self.busy else 'Capture failed. Retry before using a suggestion.')
             return {'snapshot':self.snapshot,'context':self.context.copy(),'advice':recommendation,
-                    'busy':self.busy,'error':self.error,'age':age,'source_seconds':self.source_seconds,
+                    'busy':self.busy,'error':self.error,'age':age,
+                    'stage':self.stage,'elapsed':round(time.time()-self.started_at,1) if self.busy and self.started_at else None,
+                    'preview_ready':bool(self.preview),'preview_version':self.preview_version,
+                    'frame_size':self.frame_size,'viewport':self.reader.viewport,'monitor':self.monitor,'source_seconds':self.source_seconds,
                     'source':self.current_source or ('Live capture' if self.live else str(self.source.name)), 'live':self.live}
 
 
@@ -99,6 +128,18 @@ def handler(app):
                 data=json.loads(body)
                 if not isinstance(data,dict): raise ValueError('Expected a JSON object.')
                 if self.path=='/api/capture': return self.send({'started':app.capture(data.get('seconds',0))},202)
+                if self.path=='/api/viewport':
+                    viewport=data.get('viewport')
+                    with app.lock:
+                        if app.busy: return self.send({'error':'Wait for the current reading to finish before changing the crop.'},409)
+                        if app.last_frame is None: raise ValueError('Capture an image before selecting a crop.')
+                        if viewport is not None:
+                            if not isinstance(viewport,list) or len(viewport)!=4 or any(type(v) is not int for v in viewport): raise ValueError('Invalid crop rectangle.')
+                            x,y,w,h=viewport
+                            if min(x,y)<0 or min(w,h)<=0 or x+w>app.frame_size[0] or y+h>app.frame_size[1]: raise ValueError('Crop is outside the captured image.')
+                        app.reader.viewport=viewport
+                        app.reader.history.clear()
+                    return self.send({'started':app.capture(reuse=True)},202)
                 if self.path=='/api/context':
                     with app.lock:
                         if app.busy: return self.send({'error':'Wait for the current reading.'},409)
@@ -121,9 +162,10 @@ def main():
     source=p.add_mutually_exclusive_group();source.add_argument('--video',type=Path);source.add_argument('--image',type=Path);source.add_argument('--live',action='store_true')
     p.add_argument('--layout',choices=['video','compact','expanded','auto'],default='video')
     p.add_argument('--viewport',nargs=4,type=int)
+    p.add_argument('--monitor',type=int,default=1,help='Live display number (default: 1)')
     p.add_argument('--port',type=int,default=8765)
     args=p.parse_args()
-    app=Dashboard(args.video or args.image,args.live,args.layout,args.viewport)
+    app=Dashboard(args.video or args.image,args.live,args.layout,args.viewport,args.monitor)
     server=ThreadingHTTPServer(('127.0.0.1',args.port),handler(app))
     app.capture()
     print(f'Dashboard listening on port {args.port}. Press Ctrl+C to stop.',flush=True)
