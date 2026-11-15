@@ -10,6 +10,20 @@ import cv2
 import numpy as np
 from dashboard_logic import advice
 from table_reader import TableReader
+from table_locator import TableLocator
+
+
+def tracking_summary(snapshot):
+    if not snapshot:
+        return 'Waiting for a completed reading.'
+    fields=snapshot['fields']
+    cards=sum(r.get('value') is not None for k,r in fields.items() if k.startswith('board_') or '.card_' in k)
+    stacks=sum(r.get('value') is not None for k,r in fields.items() if k.endswith('.stack'))
+    if stacks==0 and fields.get('pot',{}).get('value') is None:
+        return 'Table not recognized in this frame. Check that the preview shows the game, then verify the table crop and layout.'
+    if cards==0:
+        return f'{stacks} stacks read; no cards identified. They may be hidden, not dealt, obscured, or outside the configured card regions.'
+    return f'{cards} cards identified; {stacks} stacks read. Unknown fields remain unknown.'
 
 
 class Dashboard:
@@ -17,6 +31,8 @@ class Dashboard:
         self.source=source or Path(__file__).parent/'fixtures/video-40.png'
         self.live=live
         self.monitor=monitor
+        self.auto_viewport=live and viewport is None
+        self.locator=TableLocator()
         self.stage="Waiting for capture"; self.started_at=None
         self.frame_size=None; self.preview_version=0; self.last_frame=None
         self.reader=TableReader(layout=layout,viewport=viewport)
@@ -24,10 +40,14 @@ class Dashboard:
         self.lock=threading.Lock(); self.captured_at=0; self.source_seconds=None
         self.context={'hero':5,'seats':list(range(8)),'turn':'auto','street':'auto','last_to_act':'unknown','can_raise':False}
 
-    def capture(self,seconds=0,uploaded=None,reuse=False):
+    def capture(self,seconds=0,uploaded=None,reuse=False,browser_share=False):
         if not isinstance(seconds,(int,float)) or not np.isfinite(seconds) or seconds<0: raise ValueError('Invalid video time.')
         with self.lock:
             if self.busy: return False
+            if browser_share and self.current_source!='Browser screen share':
+                self.reader.viewport=None
+                self.auto_viewport=False
+                self.reader.history.clear()
             self.busy=True; self.error=None; self.context.pop('confirmed_at',None)
             self.started_at=time.time(); self.stage='Capturing image'
             # Keep the last frame visible while the next capture is being obtained.
@@ -71,7 +91,14 @@ class Dashboard:
                     self.preview_version+=1; self.frame_size=[frame.shape[1],frame.shape[0]]
                     self.last_frame=frame; self.stage='Reading cards and text'
                     self.source_seconds=source_seconds
-                    if not reuse: self.current_source='Uploaded image' if uploaded is not None else None
+                    if not reuse: self.current_source=('Browser screen share' if browser_share else 'Uploaded image') if uploaded is not None else None
+                if self.auto_viewport:
+                    with self.lock: self.stage='Locating game window'
+                    viewport=self.locator.locate(frame)
+                    with self.lock: self.reader.viewport=viewport
+                    if viewport is None:
+                        raise RuntimeError('Could not locate the known game layout on this screen. Pause Auto update and drag around the entire game client in the preview, or use Share game window.')
+                with self.lock: self.stage='Reading cards and text'
                 snapshot=self.reader.read(frame)
                 with self.lock:
                     self.snapshot=snapshot; self.stage='Reading complete'
@@ -94,9 +121,9 @@ class Dashboard:
                 recommendation.update(action=None,reason='Reading a new frame…' if self.busy else 'Capture failed. Retry before using a suggestion.')
             return {'snapshot':self.snapshot,'context':self.context.copy(),'advice':recommendation,
                     'busy':self.busy,'error':self.error,'age':age,
-                    'stage':self.stage,'elapsed':round(time.time()-self.started_at,1) if self.busy and self.started_at else None,
+                    'tracking':tracking_summary(self.snapshot),'stage':self.stage,'elapsed':round(time.time()-self.started_at,1) if self.busy and self.started_at else None,
                     'preview_ready':bool(self.preview),'preview_version':self.preview_version,
-                    'frame_size':self.frame_size,'viewport':self.reader.viewport,'monitor':self.monitor,'source_seconds':self.source_seconds,
+                    'auto_viewport':self.auto_viewport,'frame_size':self.frame_size,'viewport':self.reader.viewport,'monitor':self.monitor,'source_seconds':self.source_seconds,
                     'source':self.current_source or ('Live capture' if self.live else str(self.source.name)), 'live':self.live}
 
 
@@ -124,7 +151,7 @@ def handler(app):
                 size=int(self.headers.get('Content-Length','0'))
                 if not 0<size<=16*1024*1024: raise ValueError('Request must be between 1 byte and 16 MiB.')
                 body=self.rfile.read(size)
-                if self.path=='/api/image': return self.send({'started':app.capture(uploaded=body)},202)
+                if self.path=='/api/image': return self.send({'started':app.capture(uploaded=body,browser_share=self.headers.get('X-Capture-Source')=='browser')},202)
                 data=json.loads(body)
                 if not isinstance(data,dict): raise ValueError('Expected a JSON object.')
                 if self.path=='/api/capture': return self.send({'started':app.capture(data.get('seconds',0))},202)
@@ -138,6 +165,7 @@ def handler(app):
                             x,y,w,h=viewport
                             if min(x,y)<0 or min(w,h)<=0 or x+w>app.frame_size[0] or y+h>app.frame_size[1]: raise ValueError('Crop is outside the captured image.')
                         app.reader.viewport=viewport
+                        app.auto_viewport=viewport is None and app.live and app.current_source!='Browser screen share'
                         app.reader.history.clear()
                     return self.send({'started':app.capture(reuse=True)},202)
                 if self.path=='/api/context':

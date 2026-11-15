@@ -4,7 +4,7 @@ import time
 import types
 from unittest.mock import patch, MagicMock
 import numpy as np
-from dashboard import Dashboard
+from dashboard import Dashboard, tracking_summary
 import unittest
 from dashboard_logic import positions, advice
 
@@ -72,7 +72,7 @@ class CaptureTests(unittest.TestCase):
             sct=capture.return_value.__enter__.return_value
             sct.monitors=[{}, {'left':0,'top':0,'width':30,'height':20}]
             sct.grab.return_value=np.zeros((20,30,4),np.uint8)
-            app=Dashboard(live=True);app.capture()
+            app=Dashboard(live=True,viewport=[0,0,30,20]);app.capture()
             try:
                 self.assertTrue(started.wait(2))
                 state=app.state()
@@ -84,6 +84,27 @@ class CaptureTests(unittest.TestCase):
                 capture.assert_called_once()
             finally: release.set();self.wait_done(app)
             self.assertIsNone(app.error)
+
+    def test_browser_source_switch_resets_crop_once_then_keeps_it(self):
+        import cv2
+        image=np.zeros((20,30,3),np.uint8)
+        _,encoded=cv2.imencode('.jpg',image)
+        with patch('dashboard.TableReader') as reader:
+            reader.return_value.read.return_value=snapshot()
+            app=Dashboard();app.reader.viewport=[1,1,10,10]
+            app.capture(uploaded=encoded.tobytes(),browser_share=True);self.wait_done(app)
+            self.assertIsNone(app.reader.viewport)
+            self.assertEqual(app.current_source,'Browser screen share')
+            app.reader.viewport=[2,2,15,15]
+            app.capture(uploaded=encoded.tobytes(),browser_share=True);self.wait_done(app)
+            self.assertEqual(app.reader.viewport,[2,2,15,15])
+            app.reader.history.clear.assert_called_once()
+
+    def test_tracking_distinguishes_lost_table_from_missing_cards(self):
+        self.assertIn('Table not recognized',tracking_summary({'fields':{}}))
+        s=snapshot(cards=(None,None))
+        self.assertIn('no cards identified',tracking_summary(s))
+        self.assertIn('cards identified',tracking_summary(snapshot()))
 
     def test_macos_permission_failure_is_actionable(self):
         quartz=types.SimpleNamespace(CGPreflightScreenCaptureAccess=lambda:False)

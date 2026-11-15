@@ -433,3 +433,40 @@ then restart the dashboard. A preview showing only wallpaper or the wrong app
 means the game is not being captured; check permission, display and visibility.
 The current capture code uses `mss.MSS()` rather than the deprecated `mss.mss()`.
 An MSS deprecation warning alone does not establish whether capture succeeded.
+
+### Off-center game windows and browser window sharing
+
+If the game is beside the dashboard, do not treat the entire desktop as the game
+client. The dashboard now offers **Share game window**: select the actual game
+window in the browser picker. Frames from that selected stream are sent to the
+local server for OCR, and Auto update starts automatically. No audio is requested.
+Stop sharing (or the browser's stop-sharing control) releases the stream and
+pauses updates. Use a recent Chrome browser on localhost; permission and available
+window choices are controlled by the browser/OS. Keep the game unminimized.
+This route does not require the dashboard's native MSS capture to see through the
+browser. If you choose the entire screen instead, select the game crop afterward.
+
+Switching to a browser stream clears a crop from the previous desktop source once;
+subsequent streamed frames preserve a user-selected crop. Starting a crop drag
+pauses Auto update so the preview cannot be replaced midway through selection.
+
+Native `--live` mode without an explicit viewport now tries to locate the known
+client using static rail/UI features, independently of its desktop position. This
+conservative matcher was tested with the retained frames shifted to the left,
+resized and placed beside a simulated second window. It checks distributed feature
+matches and rectangular geometry. If it cannot confidently locate the client, it
+shows an error and requests a manual crop or browser window share; it does not
+silently reinterpret the whole desktop. It is not a universal game/window detector.
+A manually selected crop disables automatic location and stays fixed. Resetting it
+re-enables automatic location in native live mode. No automatic location is needed
+for a shared game window already framed to the client.
+
+The status text distinguishes no table amounts recognized from a table with no
+recognized cards. Neither condition proves a hand ended; old cards are not carried
+into a new reading as if they were current. The last completed snapshot may still
+be displayed while the next one is processing, and is labeled as such.
+
+Seat indices refer to the eight layout slots, not the number of occupied seats.
+For the supplied five-player example, slots 0, 2, 3, 5 and 6 are occupied. With
+dealer 0, these map to BTN, SB, BB, UTG and CO respectively. Confirm occupied seats
+in the form; missing OCR by itself does not establish that a seat is empty.
