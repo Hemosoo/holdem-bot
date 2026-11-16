@@ -1,5 +1,7 @@
 """Local table dashboard. python dashboard.py [--video PATH | --live]."""
 import argparse
+import io
+import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
@@ -9,7 +11,7 @@ import time
 import cv2
 import numpy as np
 from dashboard_logic import advice
-from table_reader import TableReader
+from table_reader import TableReader, annotate
 from table_locator import TableLocator
 
 
@@ -31,6 +33,7 @@ class Dashboard:
         self.source=source or Path(__file__).parent/'fixtures/video-40.png'
         self.live=live
         self.monitor=monitor
+        self.completed_frame=None; self.completed_viewport=None; self.completed_capture_time=None; self.completed_source=None
         self.auto_viewport=live and viewport is None
         self.locator=TableLocator()
         self.stage="Waiting for capture"; self.started_at=None
@@ -101,7 +104,11 @@ class Dashboard:
                 with self.lock: self.stage='Reading cards and text'
                 snapshot=self.reader.read(frame)
                 with self.lock:
-                    self.snapshot=snapshot; self.stage='Reading complete'
+                    self.snapshot=snapshot; self.completed_frame=frame
+                    self.completed_viewport=list(self.reader.viewport) if self.reader.viewport is not None else None
+                    self.completed_capture_time=captured
+                    self.completed_source=self.current_source or ('Live capture' if self.live else self.source.name)
+                    self.stage='Reading complete'
             except Exception as exc:
                 message=str(exc)
                 if 'tesseract is not installed' in message.lower():
@@ -112,6 +119,44 @@ class Dashboard:
                 with self.lock: self.busy=False
         threading.Thread(target=work,daemon=True).start()
         return True
+
+    def diagnostic(self):
+        """Export matched pixels/results without confusing a pending frame with old OCR."""
+        with self.lock:
+            completed=self.completed_frame is not None
+            frame=self.completed_frame if completed else self.last_frame
+            if frame is None: raise ValueError('Capture an image first, then download diagnostics.')
+            viewport=self.completed_viewport if completed else self.reader.viewport
+            result=self.snapshot if completed else None
+            metadata={'format_version':1,'platform':sys.platform,'python':sys.version.split()[0],
+                      'opencv':cv2.__version__,'numpy':np.__version__,'layout':self.reader.layout,'viewport':viewport,
+                      'source':self.completed_source if completed else (self.current_source or ('Live capture' if self.live else self.source.name)),
+                      'capture_time':self.completed_capture_time if completed else self.captured_at,
+                      'frame_size':[frame.shape[1],frame.shape[0]],'error':self.error,
+                      'reading_available':completed,'newer_capture_in_progress':self.busy,
+                      'tracking':tracking_summary(result)}
+            latest=self.last_frame if self.last_frame is not frame else None
+        output=io.BytesIO()
+        def png(archive,name,image):
+            ok,data=cv2.imencode('.png',image)
+            if not ok: raise ValueError('Could not encode diagnostic image.')
+            archive.writestr(name,data.tobytes())
+        with zipfile.ZipFile(output,'w',zipfile.ZIP_DEFLATED) as archive:
+            png(archive,'captured-frame.png',frame)
+            cropped=frame
+            if viewport:
+                x,y,w,h=viewport;cropped=frame[y:y+h,x:x+w]
+            if cropped.size:
+                png(archive,'table-crop.png',cropped)
+                if result: png(archive,'recognition-overlay.png',annotate(cropped,result))
+            if latest is not None: png(archive,'latest-capture-not-matched-to-readings.png',latest)
+            archive.writestr('diagnostic.json',json.dumps(metadata,indent=2))
+            archive.writestr('readings.json',json.dumps(result,indent=2))
+            archive.writestr('README.txt','The captured-frame.png, table-crop.png and readings.json belong together. '+
+                              'The overlay shows the actual recognition regions. A latest-capture file, when present, '+
+                              'is a newer capture and must not be compared to those readings. '+
+                              'These files contain captured screen content; review them before sharing.\n')
+        return output.getvalue()
 
     def state(self):
         with self.lock:
@@ -138,6 +183,14 @@ def handler(app):
             path=self.path.split('?')[0]
             if path=='/': self.send((Path(__file__).parent/'dashboard.html').read_bytes(),kind='text/html; charset=utf-8')
             elif path=='/api/state': self.send(app.state())
+            elif path=='/api/diagnostic':
+                try:
+                    data=app.diagnostic()
+                    self.send_response(200);self.send_header('Content-Type','application/zip')
+                    self.send_header('Content-Disposition','attachment; filename="table-diagnostic.zip"')
+                    self.send_header('Content-Length',str(len(data)));self.send_header('Cache-Control','no-store')
+                    self.end_headers();self.wfile.write(data)
+                except ValueError as exc: self.send({'error':str(exc)},409)
             elif path=='/api/preview':
                 with app.lock: data=app.preview
                 self.send(data,kind='image/jpeg') if data else self.send({'error':'No preview'},404)

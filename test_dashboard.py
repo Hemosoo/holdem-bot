@@ -106,6 +106,31 @@ class CaptureTests(unittest.TestCase):
         self.assertIn('no cards identified',tracking_summary(s))
         self.assertIn('cards identified',tracking_summary(snapshot()))
 
+    def test_diagnostic_keeps_completed_pixels_and_crop_matched(self):
+        import io,json,zipfile,cv2
+        app=Dashboard()
+        complete=np.full((20,30,3),50,np.uint8)
+        app.completed_frame=complete;app.completed_viewport=[5,2,15,10]
+        app.completed_source='Test game';app.completed_capture_time=100
+        app.last_frame=np.full((20,30,3),150,np.uint8)
+        app.snapshot=snapshot();app.snapshot['reference_size']=[30,20]
+        for reading in app.snapshot['fields'].values(): reading['bbox']=[0,0,1,1]
+        with zipfile.ZipFile(io.BytesIO(app.diagnostic())) as archive:
+            metadata=json.loads(archive.read('diagnostic.json'))
+            self.assertEqual(metadata['viewport'],[5,2,15,10])
+            self.assertEqual(metadata['source'],'Test game')
+            self.assertEqual(metadata['capture_time'],100)
+            crop=cv2.imdecode(np.frombuffer(archive.read('table-crop.png'),np.uint8),cv2.IMREAD_COLOR)
+            self.assertEqual(crop.shape,(10,15,3))
+            self.assertTrue(np.all(crop==50))
+            newer=cv2.imdecode(np.frombuffer(archive.read('latest-capture-not-matched-to-readings.png'),np.uint8),cv2.IMREAD_COLOR)
+            self.assertTrue(np.all(newer==150))
+            self.assertIn('recognition-overlay.png',archive.namelist())
+
+    def test_diagnostic_requires_a_captured_image(self):
+        with self.assertRaisesRegex(ValueError,'Capture an image first'):
+            Dashboard().diagnostic()
+
     def test_macos_permission_failure_is_actionable(self):
         quartz=types.SimpleNamespace(CGPreflightScreenCaptureAccess=lambda:False)
         with patch('dashboard.TableReader'), patch('dashboard.sys.platform','darwin'), patch.dict('sys.modules',{'Quartz':quartz}):

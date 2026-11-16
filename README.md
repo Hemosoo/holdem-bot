@@ -470,3 +470,24 @@ Seat indices refer to the eight layout slots, not the number of occupied seats.
 For the supplied five-player example, slots 0, 2, 3, 5 and 6 are occupied. With
 dealer 0, these map to BTN, SB, BB, UTG and CO respectively. Confirm occupied seats
 in the form; missing OCR by itself does not establish that a seat is empty.
+
+### Export an incorrect reading for diagnosis
+
+When a captured game is visible but fields are wrong, pause Auto update and wait
+for recognition to finish, then click **Download diagnostic ZIP** in the preview
+section. Review the screenshots before attaching the ZIP in chat: they contain
+captured screen content, which can include other visible windows.
+
+The export contains pixel-exact `captured-frame.png`, `table-crop.png`, the
+normalized `recognition-overlay.png`, `readings.json` (including unknown values,
+raw OCR and confidence), and `diagnostic.json` with the matched crop, layout,
+source and capture timestamp. It does not include credentials or the process
+environment. If a newer image was captured after the exported reading, it is
+separately named `latest-capture-not-matched-to-readings.png`; it must not be used
+as the ground truth for that older result. Exporting a diagnostic downloads it
+locally; it does not upload or send any data automatically.
+
+Recognition is still calibrated to the retained layouts and glyph examples. A
+successful screen share does not by itself establish correct card recognition.
+The diagnostic is needed to distinguish a crop/alignment issue, font/glyph
+mismatch, occlusion or OCR error on a user's actual frames.
